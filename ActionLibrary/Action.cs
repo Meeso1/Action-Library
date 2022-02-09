@@ -54,6 +54,8 @@ namespace ActionLibrary
         public bool ethernal { get; protected set; } = false;
         public bool archived { get; private set; } = false;
         public readonly bool instant = false;
+        public readonly bool deniable = true;
+        public readonly bool reactable = true;
 
         private bool onEndWasCalled = false;
         protected double _totalDuration;
@@ -71,14 +73,19 @@ namespace ActionLibrary
         public class Args
         {
             public double duration = 0;
-            public bool ethernal = false;
-            public bool frozen = false;
-            public bool instant = false;
+            public bool ethernal = false;           //Ethernal actions don't change their duration during updates, 
+                                                    //and don't end when duration hits 0.
+            public bool frozen = false;             //Frozen actions are not updated until they are unfrozen.
+            public bool instant = false;            //Instant actions are never updated and end right after they start.
             public Group group = Group.ungrouped;
+            public bool deniable = true;                   //Deniable action can be denied start by rangers.
+            public bool reactable = true;                  //Rangers can react to reactable actions.
         }
         public Action(Args a) : this(a.duration, a.ethernal, a.frozen, a.instant)
         {
             group = a.group;
+            reactable = a.reactable;
+            deniable = a.deniable;
         }
         public Action( //To assign a Group, use an Args constructor
             double duration = 0,
@@ -152,7 +159,9 @@ namespace ActionLibrary
                 if (actions.Contains(action)) throw new System.Exception($"Attempted to add Action that was already added: {action.GetType()}");
 
                 var modifiers = action.GetModifiers();
-                if (!Ranger.CallRangers(action, ref modifiers))
+                bool rangersDenied = false;
+                if (action.reactable) rangersDenied = Ranger.CallRangers(action, ref modifiers);
+                if (!rangersDenied || !action.deniable)
                 {
                     action.Modify(modifiers);
                     action.duration = action.totalDuration;
@@ -215,7 +224,7 @@ namespace ActionLibrary
             }
 
             foreach (var a in toRemove) a.EndAction();
-        }
+        }//TODO: Remove
         public static void InsertAction(Action action)
         {
             lock (staticKey)
