@@ -1,23 +1,9 @@
 ﻿using System;
 using System.Threading;
+using System.Collections.Generic;
 
 namespace ActionLibrary
 {
-    using System.Collections;
-    using System.Collections.Generic;
-
-    /// <summary>
-    /// Arguments for <c>OnTrigger()</c> methods in actions [UNUSED]
-    /// </summary>
-    public enum TCode
-    {
-        sourceDeath,    // source died. Do something
-        CCd,            // target was hit by CC that doesn't allow this action. Do something about it (or not, idk)
-        irrelevant,     // this action is probably redundant, end it maybe or check if you should (but no pressure)
-        cancelled,      // this action was aborted by its source. End it neatly, maybe trigger some aftereffects
-        terminate       // instantly end an action ("humanely" - do cleanup and stuff)
-    }
-
     /// <summary>
     /// Arguments for <c>OnTrigger()</c> methods in actions
     /// </summary>
@@ -34,8 +20,6 @@ namespace ActionLibrary
         }
 
         //Codes
-        public static readonly ActionCode sourceDeath = new ActionCode("Source death");
-        public static readonly ActionCode CCd = new ActionCode("CCd");
         public static readonly ActionCode irrelevant = new ActionCode("Irrelevant");
         public static readonly ActionCode cancelled = new ActionCode("Cancelled");
         public static readonly ActionCode terminate = new ActionCode("Terminate");
@@ -244,7 +228,7 @@ namespace ActionLibrary
 
         //UTILITY
         public delegate bool ActionEval(Action a);
-        private static double GetTime()
+        public static double GetTime()
         {
             return (DateTime.Now - DateTime.UnixEpoch).TotalMilliseconds;
         }
@@ -275,10 +259,11 @@ namespace ActionLibrary
         public static void Shutdown() => stop = true;
 
         //LOCKING & THREADS
-        public object key = new object(); //lock on this object to assure that this action won't be updated during the operation.
-        private static object staticKey = new object(); //locked to prevent updates during OnStart() and OnEnd() action methods.
+        public object key = new object();                   //lock on this object to assure that this action won't be updated during the operation.
+        private static object staticKey = new object();     //locked to prevent updates during OnStart() and OnEnd() action methods.
         private static Thread updateThread;
         private static bool stop = false;
+        public static double minUpdateRate = 0;             //If update takes less than this value, the thread will sleep for the remainder of this time.
         private static void UpdateActionsThreadMethod()
         {
             while (!stop) UpdateActionsOnce();
@@ -287,31 +272,39 @@ namespace ActionLibrary
         private static void UpdateActionsOnce()
         {
             List<Action> toRemove = new List<Action>();
+            double lastUpdate = GetTime();
 
-            for (int i = 0; i < actions.Count; i++) lock(staticKey) lock(actions[i].key)
+            for (int i = 0; i < actions.Count; i++)
             {
-                if (!actions[i].frozen && !actions[i].archived)
-                {
-                    double now = GetTime();
-                    double dtime = now - actions[i].lastUpdateTime;
-                    if (!actions[i].ethernal)
+                int sleepTime = (int)(minUpdateRate - (GetTime() - lastUpdate));
+                if (sleepTime > 0) Thread.Sleep(sleepTime);
+                lastUpdate = GetTime();
+
+                lock (staticKey) lock (actions[i].key)
                     {
-                        if (actions[i].duration <= dtime)
+                        if (!actions[i].frozen && !actions[i].archived)
                         {
-                            double durationLeft = actions[i].duration;
-                            actions[i].duration = 0;
-                            toRemove.Add(actions[i]);
-                            actions[i].OnUpdate(durationLeft);
-                        }
-                        else
-                        {
-                            actions[i].duration -= dtime;
-                            actions[i].OnUpdate(dtime);
+                            double now = GetTime();
+                            double dtime = now - actions[i].lastUpdateTime;
+                            if (!actions[i].ethernal)
+                            {
+                                if (actions[i].duration <= dtime)
+                                {
+                                    double durationLeft = actions[i].duration;
+                                    actions[i].duration = 0;
+                                    toRemove.Add(actions[i]);
+                                    actions[i].OnUpdate(durationLeft);
+                                }
+                                else
+                                {
+                                    actions[i].duration -= dtime;
+                                    actions[i].OnUpdate(dtime);
+                                }
+                            }
+                            else actions[i].OnUpdate(dtime);
+                            actions[i].lastUpdateTime = now;
                         }
                     }
-                    else actions[i].OnUpdate(dtime);
-                    actions[i].lastUpdateTime = now;
-                }
             }
 
             foreach (var a in toRemove) lock(a.key) a.EndAction();
@@ -352,7 +345,7 @@ namespace ActionLibrary
         public static void Message(string message, bool noRequireDebug = false)
         {
             if (DEBUGMESSAGES || noRequireDebug) Console.WriteLine(message);
-        }//TODO: Detach
+        }//TODO: Sth else than Console.WriteLine()
         public virtual string StartMessage() { return ""; }
         public virtual string EndMessage() { return ""; }
         public virtual string TriggerRemoveMessage() { return ""; }
@@ -379,7 +372,6 @@ namespace ActionLibrary
 
         public override void OnUpdate(double dtime)
         {
-            //Console.WriteLine($"Await update (dtime: {dtime}, duration: {duration})");
             if (awaitTarget())
             {
                 reaction();
@@ -396,16 +388,6 @@ namespace ActionLibrary
         protected Reaction reaction = () => { };
 
         public Delay(double time) : base(duration: time) { }
-
-        public override void OnStart()
-        {
-            //Console.WriteLine($"Delay start (duration: {duration} [{totalDuration}])");
-        }
-
-        public override void OnUpdate(double dtime)
-        {
-            //Console.WriteLine($"Delay action update [dtime: {dtime}, duration: {duration}]");
-        }
 
         public override void OnEnd() { reaction(); }
         public Delay Then(Reaction reaction) { this.reaction = reaction; return this; }

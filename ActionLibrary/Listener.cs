@@ -25,7 +25,6 @@ namespace ActionLibrary
                     output = true;
                     recentlyReadEvents.Add(Log.log[i]);
                 }
-                Log.log[i].SeenBy(id);
                 lastCheckedEntry = i;
             }
 
@@ -33,7 +32,7 @@ namespace ActionLibrary
         }
         public List<Log.LogEntry> RecentEntries()
         {
-            List<Log.LogEntry> output = new List<Log.LogEntry>(); ;
+            List<Log.LogEntry> output = new List<Log.LogEntry>();
             recentlyReadEvents.RemoveAll(x => true);
             for (int i = lastCheckedEntry + 1; i < Log.log.Count; i++)
             {
@@ -42,7 +41,6 @@ namespace ActionLibrary
                     output.Add(Log.log[i]);
                     recentlyReadEvents.Add(Log.log[i]);
                 }
-                Log.log[i].SeenBy(id);
                 lastCheckedEntry = i;
             }
 

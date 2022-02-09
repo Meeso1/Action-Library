@@ -31,21 +31,11 @@ namespace ActionLibrary
             public readonly List<string> tags = new List<string>();
             public readonly Action action;
 
-            private SortedSet<int> seenByIds = new SortedSet<int>();
-
             public LogEntry(Action action, double timestamp, List<string> tags = null)
             {
                 this.action = action;
                 this.timestamp = timestamp;
                 this.tags = tags ?? new List<string>();
-            }
-            public void SeenBy(int id)
-            {
-                seenByIds.Add(id);
-            }
-            public bool WasSeenBy(int id)
-            {
-                return seenByIds.Contains(id);
             }
         }
     }
