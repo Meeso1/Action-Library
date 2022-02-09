@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 
 namespace ActionLibrary
 {
@@ -56,6 +57,7 @@ namespace ActionLibrary
 
         private bool onEndWasCalled = false;
         protected double _totalDuration;
+        private double lastUpdateTime = -1;
 
         public readonly Group group = Group.ungrouped;
 
@@ -145,35 +147,45 @@ namespace ActionLibrary
         {
             if (action is null) return true;
 
-            if (actions.Contains(action)) throw new System.Exception($"Attempted to add Action that was already added: {action.GetType()}");
-
-            var modifiers = action.GetModifiers();
-            if (!Ranger.CallRangers(action, ref modifiers))
+            lock (staticKey)
             {
-                action.Modify(modifiers);
-                action.duration = action.totalDuration;
-                actions.Add(action);
-                if (!action.instant) Message(action.StartMessage());
-                action.OnStart();
-                if (action.instant) action.EndAction();
-                return true;
+                if (actions.Contains(action)) throw new System.Exception($"Attempted to add Action that was already added: {action.GetType()}");
+
+                var modifiers = action.GetModifiers();
+                if (!Ranger.CallRangers(action, ref modifiers))
+                {
+                    action.Modify(modifiers);
+                    action.duration = action.totalDuration;
+                    actions.Add(action);
+                    if (!action.instant) Message(action.StartMessage());
+                    action.OnStart();
+                    action.lastUpdateTime = GetTime();
+                    if (action.instant) action.EndAction();
+                    return true;
+                } 
             }
             return false;
         }
         public void EndAction()
         {
-            OnEnd();
-            onEndWasCalled = true;
-            RemoveAction();
+            lock (staticKey)
+            {
+                OnEnd();
+                onEndWasCalled = true;
+                RemoveAction();
+            }
         }
         public void RemoveAction(bool callEndRangers = true)
         {
-            if (!onEndWasCalled) OnTerminate();
-            Message(EndMessage());
-            if (callEndRangers) EndRanger.CallEndRangers(this);
-            archived = true;
-            actions.Remove(this);
-            Log.AddEntry(this, GetTime());
+            lock (staticKey)
+            {
+                if (!onEndWasCalled) OnTerminate();
+                Message(EndMessage());
+                if (callEndRangers) EndRanger.CallEndRangers(this);
+                archived = true;
+                //actions.Remove(this); //archieved actions are removed from actions list at the end of each update cycle.
+                Log.AddEntry(this, GetTime()); 
+            }
         }
         public static void UpdateActions(double dtime)
         {
@@ -206,52 +218,124 @@ namespace ActionLibrary
         }
         public static void InsertAction(Action action)
         {
-            actions.Add(action);
-            if (action.instant) action.EndAction();
+            lock (staticKey)
+            {
+                actions.Add(action);
+                if (action.instant) action.EndAction();
+            }
         }
         public void DeleteAction()
         {
-            if (!onEndWasCalled) OnTerminate();
-            actions.Remove(this);
+            lock (staticKey)
+            {
+                if (!onEndWasCalled) OnTerminate();
+                actions.Remove(this);
+            }
         }
 
         //UTILITY
         public delegate bool ActionEval(Action a);
-        private double GetTime()
+        private static double GetTime()
         {
-            return 0;
-        }//TODO: Fix
+            return (DateTime.Now - DateTime.UnixEpoch).TotalMilliseconds;
+        }
         public Action Clone()
         {
-            return (Action)MemberwiseClone();
+            lock(key) return (Action)MemberwiseClone();
         }
         protected virtual void ChangeTotalDuration(double newTotalDuration, bool addAhead = true)
         {
-            if (addAhead)
+            lock (key)
             {
-                duration += (newTotalDuration - totalDuration);
-                if (duration < 0) duration = 0;
+                if (addAhead)
+                {
+                    duration += (newTotalDuration - totalDuration);
+                    if (duration < 0) duration = 0;
+                }
+                _totalDuration = newTotalDuration; 
             }
-            _totalDuration = newTotalDuration;
         }
-        public void SetFrozen(bool b) => frozen = b;
-        public void SetEthernal(bool b) => ethernal = b;
+        public void SetFrozen(bool b)
+        {
+            lock(key) frozen = b;
+        }
+        public void SetEthernal(bool b) 
+        { 
+            lock(key) ethernal = b; 
+        }
+        public static void Shutdown() => stop = true;
+
+        //LOCKING & THREADS
+        public object key = new object(); //lock on this object to assure that this action won't be updated during the operation.
+        private static object staticKey = new object(); //locked to prevent updates during OnStart() and OnEnd() action methods.
+        private static Thread updateThread;
+        private static bool stop = false;
+        private static void UpdateActionsThreadMethod()
+        {
+            while (!stop) UpdateActionsOnce();
+            TerminateAllActions();
+        }
+        private static void UpdateActionsOnce()
+        {
+            List<Action> toRemove = new List<Action>();
+
+            for (int i = 0; i < actions.Count; i++) lock(staticKey) lock(actions[i].key)
+            {
+                if (!actions[i].frozen && !actions[i].archived)
+                {
+                    double now = GetTime();
+                    double dtime = now - actions[i].lastUpdateTime;
+                    if (!actions[i].ethernal)
+                    {
+                        if (actions[i].duration <= dtime)
+                        {
+                            double durationLeft = actions[i].duration;
+                            actions[i].duration = 0;
+                            toRemove.Add(actions[i]);
+                            actions[i].OnUpdate(durationLeft);
+                        }
+                        else
+                        {
+                            actions[i].duration -= dtime;
+                            actions[i].OnUpdate(dtime);
+                        }
+                    }
+                    else actions[i].OnUpdate(dtime);
+                    actions[i].lastUpdateTime = now;
+                }
+            }
+
+            foreach (var a in toRemove) lock(a.key) a.EndAction();
+            lock(staticKey) actions.RemoveAll((a) => a.archived);
+        }
+        private static void TerminateAllActions()
+        {
+            lock (staticKey)
+            {
+                foreach (Action a in actions) a.RemoveAction();
+            }
+        }
+        static Action()
+        {
+            updateThread = new Thread(UpdateActionsThreadMethod);
+            updateThread.Start();
+        }
 
         //GET CERTAIN ACTIONS
         public static List<Action> GetAll(ActionEval check)
         {
             List<Action> result = new List<Action>();
-            foreach (Action action in actions) if (check(action)) result.Add(action);
+            lock(staticKey) foreach (Action action in actions) if (check(action) && !action.archived) result.Add(action);
             return result;
         }
         public static Action Get(ActionEval check)
         {
-            foreach (Action action in actions) if (check(action)) return action;
+            lock(staticKey) foreach (Action action in actions) if (check(action) && !action.archived) return action;
             return null;
         }
         public static bool Any(ActionEval check)
         {
-            foreach (Action action in actions) if (check(action)) return true;
+            lock(staticKey) foreach (Action action in actions) if (check(action) && !action.archived) return true;
             return false;
         }
 
@@ -286,6 +370,7 @@ namespace ActionLibrary
 
         public override void OnUpdate(double dtime)
         {
+            //Console.WriteLine($"Await update (dtime: {dtime}, duration: {duration})");
             if (awaitTarget())
             {
                 reaction();
@@ -303,8 +388,18 @@ namespace ActionLibrary
 
         public Delay(double time) : base(duration: time) { }
 
+        public override void OnStart()
+        {
+            //Console.WriteLine($"Delay start (duration: {duration} [{totalDuration}])");
+        }
+
+        public override void OnUpdate(double dtime)
+        {
+            //Console.WriteLine($"Delay action update [dtime: {dtime}, duration: {duration}]");
+        }
+
         public override void OnEnd() { reaction(); }
-        public void Then(Reaction reaction) { this.reaction = reaction; }
+        public Delay Then(Reaction reaction) { this.reaction = reaction; return this; }
     }
 
     public class Post : Action
@@ -328,26 +423,6 @@ namespace ActionLibrary
         {
             this.name = name;
             details = o;
-        }
-    }
-
-    //THINKING
-    public class RunningAction<T> where T : Action
-    {
-        private T action;
-
-        public RunningAction(T a)
-        {
-            action = a;
-        }
-
-        public static implicit operator T(RunningAction<T> val) => val.action;
-
-        public static void test()
-        {
-            var a = new RunningAction<Await>(new Await(() => true).Then(() => { Console.WriteLine("HI!"); }).Start());
-
-            //a.Then(()=> { });
         }
     }
 
