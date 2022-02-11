@@ -9,45 +9,45 @@ namespace ActionLibrary
     public class Listener
     {
         public readonly int id;
-        public readonly Func<Log.LogEntry, bool> check;
+        public readonly Func<Archive.Entry, bool> check;
 
         private int lastCheckedEntry;
-        private List<Log.LogEntry> recentlyReadEvents = new List<Log.LogEntry>();
+        private List<Archive.Entry> recentlyReadEvents = new List<Archive.Entry>();
 
         public bool When()
         {
             bool output = false;
             recentlyReadEvents.RemoveAll(x => true);
-            for (int i = lastCheckedEntry + 1; i < Log.log.Count; i++)
+            for (int i = lastCheckedEntry + 1; i < Archive.log.Count; i++)
             {
-                if (check(Log.log[i]))
+                if (check(Archive.log[i]))
                 {
                     output = true;
-                    recentlyReadEvents.Add(Log.log[i]);
+                    recentlyReadEvents.Add(Archive.log[i]);
                 }
                 lastCheckedEntry = i;
             }
 
             return output;
         }
-        public List<Log.LogEntry> RecentEntries()
+        public List<Archive.Entry> RecentEntries()
         {
-            List<Log.LogEntry> output = new List<Log.LogEntry>();
+            List<Archive.Entry> output = new List<Archive.Entry>();
             recentlyReadEvents.RemoveAll(x => true);
-            for (int i = lastCheckedEntry + 1; i < Log.log.Count; i++)
+            for (int i = lastCheckedEntry + 1; i < Archive.log.Count; i++)
             {
-                if (check(Log.log[i]))
+                if (check(Archive.log[i]))
                 {
-                    output.Add(Log.log[i]);
-                    recentlyReadEvents.Add(Log.log[i]);
+                    output.Add(Archive.log[i]);
+                    recentlyReadEvents.Add(Archive.log[i]);
                 }
                 lastCheckedEntry = i;
             }
 
             return output;
         }
-        public List<Log.LogEntry> GetRecentEntries() { return recentlyReadEvents; }
-        public Listener(Func<Log.LogEntry, bool> Pcheck, int startIndex, int id)
+        public List<Archive.Entry> GetRecentEntries() { return recentlyReadEvents; }
+        public Listener(Func<Archive.Entry, bool> Pcheck, int startIndex, int id)
         {
             check = Pcheck;
             lastCheckedEntry = startIndex;

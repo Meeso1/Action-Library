@@ -177,7 +177,7 @@ namespace ActionLibrary
                 if (callEndRangers) EndRanger.CallEndRangers(this);
                 archived = true;
                 //actions.Remove(this); //archieved actions are removed from actions list at the end of each update cycle.
-                Log.AddEntry(this, GetTime()); 
+                if(enableArchive) Archive.AddEntry(this, GetTime()); 
             }
         }
         public static void UpdateActions(double dtime)
@@ -342,6 +342,7 @@ namespace ActionLibrary
         }
 
         //BASIC LOG MESSAGES
+        public bool enableArchive = true;   //If true, actions will be added to Archive after ending
         public static void Message(string message, bool noRequireDebug = false)
         {
             if (DEBUGMESSAGES || noRequireDebug) Console.WriteLine(message);
