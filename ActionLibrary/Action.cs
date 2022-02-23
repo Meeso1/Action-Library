@@ -176,7 +176,8 @@ namespace ActionLibrary
                 Message(EndMessage());
                 if (callEndRangers) EndRanger.CallEndRangers(this);
                 archived = true;
-                //actions.Remove(this); //archieved actions are removed from actions list at the end of each update cycle.
+                actions.Remove(this);   //archieved actions are removed from actions list at the end of each update cycle.
+                                        //NOT ANYMORE
                 if(enableArchive) Archive.AddEntry(this, GetTime()); 
             }
         }
@@ -274,35 +275,38 @@ namespace ActionLibrary
             List<Action> toRemove = new List<Action>();
             double lastUpdate = GetTime();
 
-            for (int i = 0; i < actions.Count; i++)
+            List<Action> actionsIter = new List<Action>();
+            actionsIter.AddRange(actions);
+
+            for (int i = 0; i < actionsIter.Count; i++)
             {
                 int sleepTime = (int)(minUpdateRate - (GetTime() - lastUpdate));
                 if (sleepTime > 0) Thread.Sleep(sleepTime);
                 lastUpdate = GetTime();
 
-                lock (staticKey) lock (actions[i].key)
+                lock (staticKey) lock (actionsIter[i].key)
                     {
-                        if (!actions[i].frozen && !actions[i].archived)
+                        if (!actionsIter[i].frozen && !actionsIter[i].archived)
                         {
                             double now = GetTime();
-                            double dtime = now - actions[i].lastUpdateTime;
-                            if (!actions[i].ethernal)
+                            double dtime = now - actionsIter[i].lastUpdateTime;
+                            if (!actionsIter[i].ethernal)
                             {
-                                if (actions[i].duration <= dtime)
+                                if (actionsIter[i].duration <= dtime)
                                 {
-                                    double durationLeft = actions[i].duration;
-                                    actions[i].duration = 0;
-                                    toRemove.Add(actions[i]);
-                                    actions[i].OnUpdate(durationLeft);
+                                    double durationLeft = actionsIter[i].duration;
+                                    actionsIter[i].duration = 0;
+                                    toRemove.Add(actionsIter[i]);
+                                    actionsIter[i].OnUpdate(durationLeft);
                                 }
                                 else
                                 {
-                                    actions[i].duration -= dtime;
-                                    actions[i].OnUpdate(dtime);
+                                    actionsIter[i].duration -= dtime;
+                                    actionsIter[i].OnUpdate(dtime);
                                 }
                             }
-                            else actions[i].OnUpdate(dtime);
-                            actions[i].lastUpdateTime = now;
+                            else actionsIter[i].OnUpdate(dtime);
+                            actionsIter[i].lastUpdateTime = now;
                         }
                     }
             }
