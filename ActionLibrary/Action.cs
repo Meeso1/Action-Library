@@ -267,23 +267,25 @@ namespace ActionLibrary
         public static double minUpdateRate = 0;             //If update takes less than this value, the thread will sleep for the remainder of this time.
         private static void UpdateActionsThreadMethod()
         {
-            while (!stop) UpdateActionsOnce();
+            double lastUpdate = GetTime();
+            while (!stop)
+            {
+                UpdateActionsOnce();
+                int sleepTime = (int)(minUpdateRate - (GetTime() - lastUpdate));
+                if (sleepTime > 0) Thread.Sleep(sleepTime);
+                lastUpdate = GetTime();
+            }
             TerminateAllActions();
         }
         private static void UpdateActionsOnce()
         {
             List<Action> toRemove = new List<Action>();
-            double lastUpdate = GetTime();
 
             List<Action> actionsIter = new List<Action>();
             actionsIter.AddRange(actions);
 
             for (int i = 0; i < actionsIter.Count; i++)
             {
-                int sleepTime = (int)(minUpdateRate - (GetTime() - lastUpdate));
-                if (sleepTime > 0) Thread.Sleep(sleepTime);
-                lastUpdate = GetTime();
-
                 lock (staticKey) lock (actionsIter[i].key)
                     {
                         if (!actionsIter[i].frozen && !actionsIter[i].archived)
@@ -318,7 +320,9 @@ namespace ActionLibrary
         {
             lock (staticKey)
             {
-                foreach (Action a in actions) a.RemoveAction();
+                List<Action> actionsIter = new List<Action>();
+                actionsIter.AddRange(actions);
+                foreach (Action a in actionsIter) a.RemoveAction();
             }
         }
         static Action()
@@ -422,4 +426,143 @@ namespace ActionLibrary
         }
     }
 
+    public class ParallelTask<A, R> : Action
+    {
+        private readonly Task task;
+        private readonly A argument;
+
+        private readonly List<Reaction> reactions = new List<Reaction>();
+        private Thread taskThread;
+        private CancellationTokenSource tokenSrc = new CancellationTokenSource();
+
+        private readonly object completeLock = new object();
+        private bool _complete = false;
+
+        private readonly object completenessLock = new object();
+        private double _completeness = 0;
+
+        private readonly object resultLock = new object();
+        private R _result = default;
+
+        private readonly object cancelledLock = new object();
+        private bool _cancelled = false;
+
+        public bool complete
+        {
+            get
+            {
+                lock (completeLock) return _complete;
+            }
+            private set
+            {
+                lock (completeLock) _complete = value;
+            }
+        }
+        public double completeness
+        {
+            get
+            {
+                lock (completenessLock) return _completeness;
+            }
+            private set
+            {
+                lock (completenessLock) _completeness = value;
+            }
+        }
+        public R result
+        {
+            get
+            {
+                lock (resultLock) return _result;
+            }
+            private set
+            {
+                lock (resultLock) _result = value;
+            }
+        }
+        public bool cancelled 
+        { 
+            get 
+            {
+                lock (cancelledLock) return _cancelled;
+            } 
+            private set
+            {
+                lock (cancelledLock) _cancelled = value;
+            }
+        }
+
+        public delegate R Task(A arg, SetCompletenessMethod setMethod, CancellationToken token);
+        public delegate R NoArgTask(SetCompletenessMethod setMethod, CancellationToken token);
+        public delegate R NoTokenTask(A arg, SetCompletenessMethod setMethod);
+        public delegate R NoTokenNoArgTask(SetCompletenessMethod setMethod);
+        public delegate R SimpleTask();
+        
+        public delegate void Reaction(R res);
+        public delegate void SetCompletenessMethod(double value);
+
+        public ParallelTask(Task task, A arg) : base(new Args()
+        {
+            ethernal = true,
+            deniable = false,
+            reactable = false,
+            group = Group.Get("Tasks") ?? Group.NewGroup("Tasks")
+        })
+        {
+            this.task = task;
+            this.argument = arg;
+        }
+        public ParallelTask(NoArgTask task) : this((a, s, t) => task(s, t), default) { }
+        public ParallelTask(NoTokenTask task, A arg) : this((a, s, t) => task(a, s), arg) { }
+        public ParallelTask(NoTokenNoArgTask task) : this((a, s, t) => task(s), default) { }
+        public ParallelTask(SimpleTask task) : this((a, s, t) => task(), default) { }
+
+        public ParallelTask<A, R> Then(Reaction r)
+        {
+            reactions.Add(r);
+            return this;
+        }
+
+        public override void OnStart()
+        {
+            taskThread = new Thread(() =>
+            {
+                R res = task(argument, (v) => {
+                   completeness = (v >= 0 && v <= 1)
+                        ? v
+                        : throw new ArgumentException("Completeness must be between 0 and 1");
+                }, tokenSrc.Token);
+                if (!archived && !cancelled)
+                {
+                    result = res;
+                    completeness = 1;
+                    complete = true;
+                }
+                tokenSrc?.Dispose();
+                tokenSrc = null;
+            });
+            taskThread.Start();
+        }
+
+        public override void OnUpdate(double dtime)
+        {
+            if (complete)
+            {
+                foreach (var f in reactions) f(result);
+                OnTrigger(ActionCode.terminate);
+            }
+        }
+
+        public override void OnTerminate()
+        {
+            if (!complete)
+            {
+                cancelled = true;
+                tokenSrc.Cancel();
+            }
+            
+        }
+
+        public void Cancel() => OnTrigger(ActionCode.terminate);
+    }
 }
